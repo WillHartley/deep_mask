@@ -37,9 +37,9 @@ class Seg_Map(object):
 
 
 
-def run_sex(fname, weight_name, conf_file):
+def run_sex(fname, weight_name, conf_file, param_name):
     # run sextractor
-    subprocess.call('sex -c {0} {1} -WEIGHT_IMAGE {2} -CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME seg.fits'.format(conf_file, fname, weight_name), shell=True)
+    subprocess.call('sex -c {0} {1} -WEIGHT_IMAGE {2} -PARAMETER_FILE {3} -CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME seg.fits'.format(conf_file, fname, weight_name, param_name), shell=True)
 
 
 def save_mask(mask, fname='mask.fits'):
@@ -52,7 +52,7 @@ def save_mask(mask, fname='mask.fits'):
 if __name__ == '__main__':
 
     # get filename arg. - sort this out a bit better.
-    if len(sys.argv) >= 4:
+    if len(sys.argv) < 4:
         print('Error: No filename supplied.')
         print('Call as: python clean_im.py <image filename> <weight filename> <config filename>')
         sys.exit()
@@ -66,7 +66,7 @@ if __name__ == '__main__':
             param_name = "../conf/default.param"
 
             
-    run_sex(fname)
+    run_sex(fname, wname, conf_name, param_name)
     mask = Seg_Map("seg.fits")
     save_mask(mask)
     
