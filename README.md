@@ -1,21 +1,13 @@
-# gal_pop
+# deep_mask
 
 Contributors: Will Hartley (William.Hartley@unige.ch)
 
-Repo for constructing observed properties of galaxy populations (photometry) following a set of SEDs and luminosity function(s).
+## File structure 
 
-## What does the code do
-
-Draws redshift and luminosity values from a luminosity function, assigns an SED and computes photometry.
-
-## File structure
-
-The repository is organized into the following directories:
-
-* examples
-* notebooks
+* deep_mask - python routines
+* notebooks - example useage
 
 
-## Getting started
+## Requirements
 
-Here is an example
+astropy, reproject, SExtractor
