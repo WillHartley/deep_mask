@@ -24,17 +24,34 @@ def run_sextr(fname):
     subprocess.call(sextr_cmd, shell=True)
 
 
+def invert_mask(mask):
+    return -1*mask + 1
+    
+def combine_masks(obj_mask, pipe_mask):
+    # take in the object mask, and the mask already present in the input file and combine
+    # 1=masked, 0=ok.
+    # The SE mask is the opposite (for ease of applying the filter), so need to convert
+    pipe_mask = invert_mask(pipe_mask)
+    obj_mask = obj_mask*pipe_mask
+    obj_mask = invert_mask(obj_mask)
+    return obj_mask
+    
+    
+
 def subtract_image_backgrounds(deep_mask, image_list):
     # loop over each item in the list file
-    for im in image_list:
+    for im_file in image_list:
         # read the target image header
-        im_head = pyfits.open(im)[0].header
+        im = pyfits.open(im_file)
         
         # move the deep_mask into the right frame
-        mask = remap_mask(deep_mask, im_head)
+        mask = remap_mask(deep_mask, im[0].header)
+
+        # combine the new mask with the one from the single-epoch file
+        mask = combine_masks(mask, im[1].data)
 
         # write to disk so SExtractor can access it
-        save_mask(mask, im_head)
+        save_mask(mask, im[0].header)
 
         # run SExtractor to get background subtracted image
         run_sextr(fname)

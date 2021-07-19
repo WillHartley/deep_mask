@@ -5,12 +5,11 @@ import subprocess
 from scipy import signal
 
 class Seg_Map(object):
-
+    
     def __init__(self, image_name, exp_size=8):
 
         self.exp_size = exp_size
         self.construct_mask(image_name)
-
 
 
     def expand_seg(self, mask):
