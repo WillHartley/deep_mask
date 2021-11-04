@@ -38,7 +38,8 @@ class Seg_Map(object):
 
 def run_sex(fname, weight_name, conf_file, param_name):
     # run sextractor
-    subprocess.call('sex -c {0} {1} -WEIGHT_IMAGE {2} -PARAMETER_FILE {3} -CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME seg.fits'.format(conf_file, fname, weight_name, param_name), shell=True)
+    command = 'sex -c {0} {1} -WEIGHT_IMAGE {2} -PARAMETER_FILE {3} -CHECKIMAGE_TYPE SEGMENTATION -CHECKIMAGE_NAME seg.fits'.format(conf_file, fname, weight_name, param_name)
+    subprocess.call(['/bin/bash', '-i', '-c', command]) # this form because I use an alias
 
 
 def save_mask(mask, fname='mask.fits'):

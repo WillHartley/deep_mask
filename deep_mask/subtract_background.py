@@ -15,18 +15,24 @@ def remap_mask(mask_hdu, target_header):
 
 
 def run_sextr(fname):
-    # construct the output file name
+    # construct the science frame and output file names
+    sci_file = fname.rsplit( ".", 1 )[ 0 ]+"_sci.fits"  
     out_name = fname.rsplit(".", 1)[0]+"_bksub.fits"
 
     # SExtractor command #-CHECKIMAGE_TYPE -BACKGROUND
     # Find a better way to do the config path
-    sextr_cmd = "sex -c ../conf/backsub.conf {0}".format(fname)
+    sextr_cmd = "source-extractor -c ../conf/backsub.conf {0}".format(sci_file)
     subprocess.call(sextr_cmd, shell=True)
+
+    # this causes problems, so don't know how to use an alias.
+    # I guess it doesn't like spawning lots of interactive sessions.
+    # Need a config file...
+    #subprocess.call(['/bin/bash', '-i', '-c', sextr_cmd]) # this form because I use an alias
 
     # Had a problem with swarp not being able to handle the extensions of the check image, so
     # we'll use python to select only the one we want.
     f = pyfits.open("check.fits")
-    f[1].writeto(out_name, overwrite=True)
+    f[0].writeto(out_name, overwrite=True)
     subprocess.call("rm check.fits", shell=True)
 
 
@@ -47,9 +53,10 @@ def combine_masks(obj_mask, pipe_mask):
 def subtract_image_backgrounds(deep_mask, image_list):
     # loop over each item in the list file
     for im_file in image_list:
+        #print(im_file)
         # read the target image header
         im = pyfits.open(im_file)
-        
+
         # move the deep_mask into the right frame
         mask = remap_mask(deep_mask, im[0].header)
 
