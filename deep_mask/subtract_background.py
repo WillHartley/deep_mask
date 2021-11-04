@@ -1,11 +1,11 @@
 import numpy as np
 from reproject import reproject_interp
 import astropy.io.fits as pyfits
-import subprocess
+import subprocess, sys
 
 
 def save_mask(mask, header):
-    pyfits.writeto('mask.fits', mask, header, overwrite=True)
+    pyfits.writeto('mask_tmp.fits', mask, header, overwrite=True)
 
     
 def remap_mask(mask_hdu, target_header):
@@ -20,8 +20,14 @@ def run_sextr(fname):
 
     # SExtractor command #-CHECKIMAGE_TYPE -BACKGROUND
     # Find a better way to do the config path
-    sextr_cmd = "sex -c ../conf/backsub.conf {0} -CHECKIMAGE_NAME {1}".format(fname, out_name)
+    sextr_cmd = "sex -c ../conf/backsub.conf {0}".format(fname)
     subprocess.call(sextr_cmd, shell=True)
+
+    # Had a problem with swarp not being able to handle the extensions of the check image, so
+    # we'll use python to select only the one we want.
+    f = pyfits.open("check.fits")
+    f[1].writeto(out_name, overwrite=True)
+    subprocess.call("rm check.fits", shell=True)
 
 
 def invert_mask(mask):
@@ -54,7 +60,7 @@ def subtract_image_backgrounds(deep_mask, image_list):
         save_mask(mask, im[0].header)
 
         # run SExtractor to get background subtracted image
-        run_sextr(fname)
+        run_sextr(im_file)
 
 
 
@@ -71,7 +77,7 @@ if __name__ == '__main__':
         list_file = sys.argv[2]
 
     deep_mask = pyfits.open(mask_name)[0]
-    image_list = np.genfromtxt(list_file)
+    image_list = np.genfromtxt(list_file, dtype=str)
 
     subtract_image_backgrounds(deep_mask, image_list)
 

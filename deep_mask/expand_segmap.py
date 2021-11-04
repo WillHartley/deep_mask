@@ -13,9 +13,9 @@ class Seg_Map(object):
 
 
     def expand_seg(self, mask):
-        mask = signal.convolve2d(mask, np.ones((self.exp_seg,self.exp_seg)), mode='same')
-        mask = np.floor(seg/self.exp_seg**2)
-        return seg
+        mask = signal.convolve2d(mask, np.ones((self.exp_size,self.exp_size)), mode='same')
+        mask = np.floor(mask/self.exp_size**2)
+        return mask
 
         
     def construct_mask(self, image_name):
