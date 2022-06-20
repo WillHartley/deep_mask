@@ -1,8 +1,7 @@
-#### WIP - doesn't run yet #####
-
-
 import numpy as np
 import astropy.io.fits as pyfits
+import sys, copy
+from collections import namedtuple
 
 import matplotlib.pyplot as plt
 plt.rc('font',**{'family':'serif','size':18})
@@ -34,6 +33,18 @@ def neighboring_groups(nodes):
         yield tuple(group)
 
 
+def save_mask(mask_data, name_base):
+    # construct output name
+    out_name = name_base.rsplit('.',1)[0]+"_clipmask.fits"
+    # write out
+    pyfits.writeto(out_name, mask_data, pyfits.Header(), overwrite=True)
+
+    
+def shift_mask(mask, new_head, orig_head):
+
+    return new_mask
+
+
 
 class clip_mask():
 
@@ -44,44 +55,75 @@ class clip_mask():
         self.clip = np.genfromtxt(config['clip_file'])
         self.sefs = np.genfromtxt(config['se_list'], dtype=str)
 
-        #self.delete_collisions()
+        if self.config['star_list'] is not None:
+            #self.delete_collisions()
         
         self.groups = self.build_groups()
-        print(self.groups)
+        self.coadd_mask = self.build_mask()
+        save_mask(self.coadd_mask, config['coadd_file'])
 
+        self.generate_masks()
+        
+
+
+    def generate_masks(self):
+        # main function to produce the individual frame masks and translate them via wcs
+        # get number of frames
+        N_frames = len(self.sefs)
+
+        # loop over sefs
+        for iframe in range(N_frames):
+            mask = self.build_mask(frame_num=iframe)
+            sef_head = pyfits.open(self.sefs[iframe])[0].header
+            mask = shift_mask(mask, sef_head, self.coadd_head)
+            save_mask(self.coadd_mask, self.sefs[iframe])
+            if self.config['output_regions'] is True:
+                output_reg(self.groups, iframe, self.sefs[iframe])
+
+    def build_mask(self, frame_num=None):
+        # make a blank array to insert mask bits into
+        mask = np.zeros((self.coadd_head['NAXIS1'], self.coadd_head['NAXIS2'])).T
+        indx_arr = np.meshgrid(np.arange(self.coadd_head['NAXIS1']),np.arange(self.coadd_head['NAXIS2']))
+        # temporary: change all pixels in a group to 16
+        for g in self.groups:
+            # test to see whether we want to use this pixel group in the mask.
+            if frame_num is None or frame_num==g.frame:
+                mask[(indx_arr[0]-g.x)**2+(indx_arr[1]-g.y)**2 < (g.size*np.pi)] = self.config['mask_value']
+        return mask
         
     def build_groups(self):
-        x_bar = []
-        y_bar = []
-        group_size = []
-        frame_id = []
+        # build a named tuple to contain group info
+        group = namedtuple('group', ['x', 'y', 'size', 'frame'])
+        groups = []
 
-        for frame in range(int(np.max(clip[:,0]))):
-            subset = np.where((clip[:,0]==frame)&(np.abs(clip[:,3])>5))[0]
-            pos = tuple([tuple(clip[s,1:3]) for s in subset])
+        for frame in range(int(np.max(self.clip[:,0]))):
+            subset = np.where((self.clip[:,0]==frame)&(np.abs(self.clip[:,3])>5))[0]
+            pos = tuple([tuple(self.clip[s,1:3]) for s in subset])
             out = tuple(neighboring_groups(pos))
     
             # try a min number of pixels, 30
-            for group in out:
-                if len(group) > 29:
-                    group_size.append(len(group))
-                    x_bar.append(np.mean([group[i][0] for i in range(len(group))]))
-                    y_bar.append(np.mean([group[i][1] for i in range(len(group))]))
-                    frame_id.append(frame)
-                    
-        return [x_bar, y_bar, group_size, frame_id]
+            for g in out:
+                if len(g) > 29:
+                    groups.append(group(x=np.mean([g[i][0] for i in range(len(g))]),
+                                        y=np.mean([g[i][1] for i in range(len(g))]),
+                                        size=len(g),
+                                        frame=frame))  
+        return groups
 
-    def delete_collisions(self):
+    #def delete_collisions(self):
         # remove clipped pixels that coincide with stars from being possibly masked.
-        
 
-    def output_reg(self, reg_name='clipped_mask.reg'):
-        # need to add the header, make it obvious it is for the coadd.
+        
+    def output_reg(groups, reg_name='clipped_mask.reg'):
+        # need to add the header, make it obvious it is for the coadd - can make for SEFs too.
+        # re-write to take named tuples.
+        # change to RA, Dec so that we don't need to translate coords.
         [print("circle({},{},{})".format(x_bar[i],y_bar[i],np.sqrt(group_size[i])*np.pi)) for i in range(len(x_bar))]
         # the regions were a bit small when dividing by pi
 
     
     def save_plot(self, plot_name='clipped_mask.png'):
+        # update for the new group structure.
         fig = plt.figure(figsize=(9,6))
         ax = fig.add_subplot(111)
         ax.set_xlabel(r"\textbf{x}", fontsize=24)
@@ -104,7 +146,8 @@ if __name__ == '__main__':
     config = {'filters': ((5, 30, 0.2)),
               'mask_ext': -1,
               'mask_value': 16,
-              'star_list': None}
+              'star_list': None,
+              'output_regions': False}
         
 
     # get filename arg. - sort this out a bit better.
