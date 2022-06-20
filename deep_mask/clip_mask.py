@@ -90,7 +90,7 @@ class clip_mask():
             mask = self.build_mask(frame_num=iframe)
             sef_head = pyfits.open(self.sefs[iframe])[0].header
             mask = shift_mask(mask, sef_head, self.coadd_head)
-            save_mask(self.coadd_mask, self.sefs[iframe])
+            save_mask(mask, self.sefs[iframe])
             if self.config['output_regions'] is True:
                 output_reg(self.groups, name_base=self.sefs[iframe], frame_num=iframe)
 
