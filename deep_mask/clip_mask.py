@@ -2,6 +2,7 @@ import numpy as np
 import astropy.io.fits as pyfits
 import sys, copy
 from collections import namedtuple
+from reproject import reproject_interp
 
 import matplotlib.pyplot as plt
 plt.rc('font',**{'family':'serif','size':18})
@@ -41,7 +42,10 @@ def save_mask(mask_data, name_base):
 
     
 def shift_mask(mask, new_head, orig_head):
-
+    # use the astropy function to shift wcs and resample into the desired frame
+    # build the mask hdu from the array and original header
+    mask_hdu = pyfits.ImageHDU(mask, header=orig_head)
+    new_mask, _ = reproject_interp(mask_hdu, new_head)
     return new_mask
 
 
@@ -50,18 +54,28 @@ class clip_mask():
 
     def __init__(self, config):
 
+        # I/O and set up
         self.config = config
         self.coadd_head = pyfits.open(config['coadd_file'])[0].header
         self.clip = np.genfromtxt(config['clip_file'])
         self.sefs = np.genfromtxt(config['se_list'], dtype=str)
 
+        # remove clipped pixels that coincide with known bright stars
         if self.config['star_list'] is not None:
-            #self.delete_collisions()
-        
-        self.groups = self.build_groups()
-        self.coadd_mask = self.build_mask()
-        save_mask(self.coadd_mask, config['coadd_file'])
+            self.delete_collisions()
 
+        # gather clipped pixels into groups
+        self.groups = self.build_groups()
+
+        # create the coadd-level products
+        self.coadd_mask = self.build_mask()
+        save_mask(self.coadd_mask, self.config['coadd_file'])
+        if self.config['output_regions'] is True:
+            self.output_reg(self.groups, name_base=self.config['coadd_file'])
+        if 'plot_name' in self.config.keys():
+            self.save_plot(plot_name=self.config['plot_name'])
+
+        # Single-epoch level products
         self.generate_masks()
         
 
@@ -78,7 +92,7 @@ class clip_mask():
             mask = shift_mask(mask, sef_head, self.coadd_head)
             save_mask(self.coadd_mask, self.sefs[iframe])
             if self.config['output_regions'] is True:
-                output_reg(self.groups, iframe, self.sefs[iframe])
+                output_reg(self.groups, name_base=self.sefs[iframe], frame_num=iframe)
 
     def build_mask(self, frame_num=None):
         # make a blank array to insert mask bits into
@@ -93,7 +107,7 @@ class clip_mask():
         
     def build_groups(self):
         # build a named tuple to contain group info
-        group = namedtuple('group', ['x', 'y', 'size', 'frame'])
+        group = namedtuple('group', ['x', 'y', 'size', 'frame', 'pixels'])
         groups = []
 
         for frame in range(int(np.max(self.clip[:,0]))):
@@ -107,16 +121,20 @@ class clip_mask():
                     groups.append(group(x=np.mean([g[i][0] for i in range(len(g))]),
                                         y=np.mean([g[i][1] for i in range(len(g))]),
                                         size=len(g),
-                                        frame=frame))  
+                                        frame=frame,
+                                        pixels=g))  
         return groups
 
-    #def delete_collisions(self):
+    def delete_collisions(self):
         # remove clipped pixels that coincide with stars from being possibly masked.
+        stars = np.genfromtxt(self.config['star_list'])
+        # ........
 
         
-    def output_reg(groups, reg_name='clipped_mask.reg'):
+    def output_reg(groups, name_base=None, frame_num=None):
         # need to add the header, make it obvious it is for the coadd - can make for SEFs too.
         # re-write to take named tuples.
+        # try except the name, else use: 'clipped_mask.reg'
         # change to RA, Dec so that we don't need to translate coords.
         [print("circle({},{},{})".format(x_bar[i],y_bar[i],np.sqrt(group_size[i])*np.pi)) for i in range(len(x_bar))]
         # the regions were a bit small when dividing by pi
@@ -158,7 +176,7 @@ if __name__ == '__main__':
     else:
         clip_file = sys.argv[1]
         coadd_file = sys.argv[2]
-        se_list = sys.argv[2]
+        se_list = sys.argv[3]
 
     config['clip_file'] = clip_file
     config['coadd_file'] = coadd_file
