@@ -3,6 +3,8 @@ import astropy.io.fits as pyfits
 import sys, copy
 from collections import namedtuple
 from reproject import reproject_interp
+from skimage.measure import EllipseModel
+from scipy.spatial import ConvexHull
 
 import matplotlib.pyplot as plt
 plt.rc('font',**{'family':'serif','size':18})
@@ -48,6 +50,54 @@ def shift_mask(mask, new_head, orig_head):
     new_mask, _ = reproject_interp(mask_hdu, new_head)
     return new_mask
 
+def expand_pix(pix, exp, dims):
+    # grow the mask region
+    out_pix = np.flip(np.array(pix, dtype=int), 1)
+    if exp==0:
+        return out_pix
+    else:
+        # https://carstenschelp.github.io/2018/09/14/Plot_Confidence_Ellipse_001.html
+
+        # get the convex hull
+        # https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.ConvexHull.html
+        hull = out_pix[ConvexHull(out_pix).vertices,:]
+        print(hull)
+        
+        # fit an ellipse to the hull
+        # (https://stackoverflow.com/questions/39693869/fitting-an-ellipse-to-a-set-of-data-points-in-python)
+        ell = EllipseModel()
+        ell.estimate(hull)
+        if ell.estimate(hull) is True:
+
+            # is theta in rads or deg?
+            xc, yc, a, b, theta = ell.params
+
+            print("center = ",  (xc, yc))
+            print("angle of rotation = ",  theta)
+            print("axes = ", (a,b))
+
+            # expand the axes by the desired amount.
+            a *= (1+exp)
+            b *= (1+exp)
+
+            # define the set of enclosed pixels. - do I need a 1px offset here????
+            ####### CHECK ############
+            indx_arr = np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
+            ix = indx_arr[0].flatten()
+            iy = indx_arr[1].flatten()
+            #xt = xc + a*cos(theta)*cos(t) - b*sin(theta)*sin(t)
+            #yt = yc + a*sin(theta)*cos(t) + b*cos(theta)*sin(t)
+            xell = (ix-xc)*np.cos(theta) + (iy-yc)*np.sin(theta)
+            yell = -(ix-xc)*np.sin(theta) + (iy-yc)*np.cos(theta)
+            mask_px = np.where(((xell/a)**2+(yell/b)**2 < 1.))[0]
+            xy = np.array([(ix[i], iy[i]) for i in mask_px])
+            
+            return np.array(xy, dtype=int)
+
+        else:
+            print("Warning: ellipse estimate failed for group, ",pix)
+            return out_pix
+
 
 
 class clip_mask():
@@ -90,6 +140,8 @@ class clip_mask():
             mask = self.build_mask(frame_num=iframe)
             sef_head = pyfits.open(self.sefs[iframe])[0].header
             mask = shift_mask(mask, sef_head, self.coadd_head)
+            mask[mask>self.config['threshold']*self.config['mask_value']] = self.config['mask_value']
+            mask[mask<self.config['mask_value']] = 0
             save_mask(mask, self.sefs[iframe])
             if self.config['output_regions'] is True:
                 output_reg(self.groups, name_base=self.sefs[iframe], frame_num=iframe)
@@ -102,27 +154,32 @@ class clip_mask():
         for g in self.groups:
             # test to see whether we want to use this pixel group in the mask.
             if frame_num is None or frame_num==g.frame:
-                mask[(indx_arr[0]-g.x)**2+(indx_arr[1]-g.y)**2 < (g.size*np.pi)] = self.config['mask_value']
+                #mask[(indx_arr[0]-g.x)**2+(indx_arr[1]-g.y)**2 < (g.size*np.pi)] = self.config['mask_value']
+                pix_arr = expand_pix(g.pixels, g.expand, mask.shape)
+                # the -1 is to convert from SExtractor unity indexing to python 0 indexing.
+                mask[pix_arr[:,0]-1,pix_arr[:,1]-1] = self.config['mask_value']
         return mask
         
     def build_groups(self):
         # build a named tuple to contain group info
-        group = namedtuple('group', ['x', 'y', 'size', 'frame', 'pixels'])
+        group = namedtuple('group', ['x', 'y', 'size', 'frame', 'pixels', 'expand'])
         groups = []
 
         for frame in range(int(np.max(self.clip[:,0]))):
-            subset = np.where((self.clip[:,0]==frame)&(np.abs(self.clip[:,3])>5))[0]
-            pos = tuple([tuple(self.clip[s,1:3]) for s in subset])
-            out = tuple(neighboring_groups(pos))
+            for f in config['filters']:
+                subset = np.where((self.clip[:,0]==frame)&(np.abs(self.clip[:,3])>f[0]))[0]
+                pos = tuple([tuple(self.clip[s,1:3]) for s in subset])
+                out = tuple(neighboring_groups(pos))
     
-            # try a min number of pixels, 30
-            for g in out:
-                if len(g) > 29:
-                    groups.append(group(x=np.mean([g[i][0] for i in range(len(g))]),
-                                        y=np.mean([g[i][1] for i in range(len(g))]),
-                                        size=len(g),
-                                        frame=frame,
-                                        pixels=g))  
+                # try a min number of pixels, 30
+                for g in out:
+                    if len(g) > f[1]:
+                        groups.append(group(x=np.mean([g[i][0] for i in range(len(g))]),
+                                            y=np.mean([g[i][1] for i in range(len(g))]),
+                                            size=len(g),
+                                            frame=frame,
+                                            pixels=g,
+                                            expand=f[2]))  
         return groups
 
     def delete_collisions(self):
@@ -158,14 +215,18 @@ if __name__ == '__main__':
     # default config,
     # filters: a tuple of tuple containing pairs of (significance, min number of pix, expansion factor)
     # [here, expansion factor refers to....]
+    # min number of pixels mustbe >6 if an exansion factor is used.
     # mask_ext: the fits extension of the mask, -1 will create new files, one for each input frame
     # mask_value: the value used in the output maskfiles - to be combined with existing values, bitwise.
     # star_list: a list of star positions - clipped pixels covering these positions will be deleted. List should contain, RA, Dec, radius for each object.
-    config = {'filters': ((5, 30, 0.2)),
+    # output_regions: whether to save a regions file of circles representing the size of each group.
+    # threshold: the reprojection causes fractional values in the single-epoch masks. This value determines whether to keep a fraction or not (real: 0 to 1).
+    config = {'filters': ((5, 400, 1.), (5, 30, 0.5), (15, 8, 0.2), (25, 1, 0.)),
               'mask_ext': -1,
-              'mask_value': 16,
+              'mask_value': 1,
               'star_list': None,
-              'output_regions': False}
+              'output_regions': False,
+              'threshold': 0.4}
         
 
     # get filename arg. - sort this out a bit better.
