@@ -5,6 +5,8 @@ from collections import namedtuple
 from reproject import reproject_interp
 from skimage.measure import EllipseModel
 from scipy.spatial import ConvexHull
+from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
 
 import matplotlib.pyplot as plt
 plt.rc('font',**{'family':'serif','size':18})
@@ -14,6 +16,30 @@ plt.rc('text', usetex=True)
 def parse_args(config, args):
 
     return config
+
+
+def run_sex(fname=None, weight_name=None, conf_file=None, param_name=None):
+    # run sextractor
+    command = 'sex -c coadd_detect.sex coadd.fits -WEIGHT_IMAGE coadd.weight.fits'
+    subprocess.call(['/bin/bash', '-i', '-c', command]) # this form because I use an alias
+
+
+def get_bright_objects(fname="coadd_objects.cat"):
+    obs = pyfits.open(fname)[1].data
+    bright = np.where((obs['MAG_AUTO']<21.5))[0]
+    x = obs['X_IMAGE'][bright]
+    y = obs['Y_IMAGE'][bright]
+    r = np.minimum(4.*obs['FLUX_RADIUS'][bright],20)
+    #print(r)
+    return [x,y,r]
+
+
+def delete_pix(x,y,r,pix):
+    for i in range(len(x)):
+        del_px = np.where((x[i]-pix[:,1])**2+(y[i]-pix[:,2])**2<r[i]**2)[0]
+        pix[~del_px,:]
+    return pix
+
 
 
 # https://stackoverflow.com/questions/62980280/finding-neighboring-pixels-python
@@ -56,46 +82,49 @@ def expand_pix(pix, exp, dims):
     if exp==0:
         return out_pix
     else:
-        # https://carstenschelp.github.io/2018/09/14/Plot_Confidence_Ellipse_001.html
+        try:
+            # https://carstenschelp.github.io/2018/09/14/Plot_Confidence_Ellipse_001.html
 
-        # get the convex hull
-        # https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.ConvexHull.html
-        hull = out_pix[ConvexHull(out_pix).vertices,:]
-        print(hull)
+            # get the convex hull
+            # https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.ConvexHull.html
+            hull = out_pix[ConvexHull(out_pix).vertices,:]
+            print(hull)
         
-        # fit an ellipse to the hull
-        # (https://stackoverflow.com/questions/39693869/fitting-an-ellipse-to-a-set-of-data-points-in-python)
-        ell = EllipseModel()
-        ell.estimate(hull)
-        if ell.estimate(hull) is True:
+            # fit an ellipse to the hull
+            # (https://stackoverflow.com/questions/39693869/fitting-an-ellipse-to-a-set-of-data-points-in-python)
+            ell = EllipseModel()
+            ell.estimate(hull)
+            if ell.estimate(hull) is True:
 
-            # is theta in rads or deg?
-            xc, yc, a, b, theta = ell.params
+                # is theta in rads or deg?
+                xc, yc, a, b, theta = ell.params
 
-            print("center = ",  (xc, yc))
-            print("angle of rotation = ",  theta)
-            print("axes = ", (a,b))
+                print("center = ",  (xc, yc))
+                print("angle of rotation = ",  theta)
+                print("axes = ", (a,b))
 
-            # expand the axes by the desired amount.
-            a *= (1+exp)
-            b *= (1+exp)
+                # expand the axes by the desired amount.
+                a *= (1+exp)
+                b *= (1+exp)
 
-            # define the set of enclosed pixels. - do I need a 1px offset here????
-            ####### CHECK ############
-            indx_arr = np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
-            ix = indx_arr[0].flatten()
-            iy = indx_arr[1].flatten()
-            #xt = xc + a*cos(theta)*cos(t) - b*sin(theta)*sin(t)
-            #yt = yc + a*sin(theta)*cos(t) + b*cos(theta)*sin(t)
-            xell = (ix-xc)*np.cos(theta) + (iy-yc)*np.sin(theta)
-            yell = -(ix-xc)*np.sin(theta) + (iy-yc)*np.cos(theta)
-            mask_px = np.where(((xell/a)**2+(yell/b)**2 < 1.))[0]
-            xy = np.array([(ix[i], iy[i]) for i in mask_px])
+                # define the set of enclosed pixels. - do I need a 1px offset here????
+                ####### CHECK ############
+                indx_arr = np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
+                ix = indx_arr[0].flatten()
+                iy = indx_arr[1].flatten()
+                #xt = xc + a*cos(theta)*cos(t) - b*sin(theta)*sin(t)
+                #yt = yc + a*sin(theta)*cos(t) + b*cos(theta)*sin(t)
+                xell = (ix-xc)*np.cos(theta) + (iy-yc)*np.sin(theta)
+                yell = -(ix-xc)*np.sin(theta) + (iy-yc)*np.cos(theta)
+                mask_px = np.where(((xell/a)**2+(yell/b)**2 < 1.))[0]
+                xy = np.array([(ix[i], iy[i]) for i in mask_px])
             
-            return np.array(xy, dtype=int)
+                return np.array(xy, dtype=int)
 
-        else:
-            print("Warning: ellipse estimate failed for group, ",pix)
+            else:
+                print("Warning: ellipse estimate failed for group, ",pix)
+                return out_pix
+        except:
             return out_pix
 
 
@@ -111,6 +140,8 @@ class clip_mask():
         self.sefs = np.genfromtxt(config['se_list'], dtype=str)
 
         # remove clipped pixels that coincide with known bright stars
+        # star_list must be a sextractor catalogue, run on the coadd that
+        # produced the clipped pixel list.
         if self.config['star_list'] is not None:
             self.delete_collisions()
 
@@ -184,8 +215,22 @@ class clip_mask():
 
     def delete_collisions(self):
         # remove clipped pixels that coincide with stars from being possibly masked.
-        stars = np.genfromtxt(self.config['star_list'])
-        # ........
+        #stars = np.genfromtxt(self.config['star_list'])
+        # read in coadd catalogue and return list of bright object
+        # postions and sizes
+        stars = get_bright_objects(self.config['star_list'])
+        
+        # convert star positions to pixels, based on wcs
+        #w = WCS(self.coadd_head)
+        #deg = SkyCoord(stars[:,0], stars[:,1], unit="deg")
+        #star_x, star_y = w.world_to_pixel(deg)
+
+        # Loop over stars that lie within the image bounds
+        #for i in range(stars.shape[0]):
+            
+
+        # remove pixels that lie within the defined circles
+        self.clip = delete_pix(stars[0], stars[1], stars[2], self.clip)
 
         
     def output_reg(groups, name_base=None, frame_num=None):
